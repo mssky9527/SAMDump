@@ -186,27 +186,11 @@ BOOL list_shadows(std::wstring& outDeviceObject) {
 
 
 HRESULT create_shadow(const std::wstring& volumePath, std::wstring& outDeviceObject) {
-    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    PrintHR("CoInitializeEx", hr);
-
-    if (SUCCEEDED(hr)) {
-        IVssBackupComponents* pBackup = nullptr;
-        hr = CreateVssBackupComponents(&pBackup);
-        PrintHR("CreateVssBackupComponents", hr);
-
-        if (SUCCEEDED(hr) && pBackup) {
-            hr = pBackup->InitializeForBackup();
-            PrintHR("InitializeForBackup", hr);
-            pBackup->Release();
-        }
-        CoUninitialize();
-    }
-
     if (DEBUG_LEVEL >= 1) {
         std::wcout << L"[+] Creating Shadow Copy for: " << volumePath << L"\n";
     }
 
-    hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     PrintHR("CoInitializeEx", hr);
     if (FAILED(hr)) return hr;
 
