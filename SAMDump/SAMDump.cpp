@@ -431,11 +431,12 @@ HANDLE OpenFileNT(const wchar_t* filePath) {
 // Read bytes using NtReadFile
 std::vector<BYTE> ReadBytesNT(HANDLE fileHandle) {
     std::vector<BYTE> fileContent;
-    BYTE buffer[4096];
     IO_STATUS_BLOCK ioStatusBlock;
     LARGE_INTEGER byteOffset = { 0 };
 
     while (TRUE) {
+        BYTE buffer[1024];
+
         NTSTATUS status = NtReadFile(
             fileHandle,
             NULL,
@@ -449,18 +450,14 @@ std::vector<BYTE> ReadBytesNT(HANDLE fileHandle) {
         );
 
         if (status != 0 && status != 0x00000103) {
-            if (status == 0x80000006) { // STATUS_END_OF_FILE
-                break;
-            }
+            if (status == 0x80000006) break;
             printf("[-] Error reading. NTSTATUS: 0x%08X\n", status);
             break;
         }
 
         DWORD bytesRead = (DWORD)ioStatusBlock.Information;
+        if (bytesRead == 0) break;
 
-        if (bytesRead == 0) {
-            break;
-        }
         fileContent.insert(fileContent.end(), buffer, buffer + bytesRead);
         byteOffset.QuadPart += bytesRead;
     }
