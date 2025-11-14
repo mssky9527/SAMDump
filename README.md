@@ -96,3 +96,28 @@ Decode with custom key and output directory:
 ```
 python xor-decoder.py --sam sam.txt --system system.txt --xor-key "MyKey" --output-dir ./results
 ```
+
+<br>
+
+## Motivation
+
+I wanted a tool to automate the process of SAM and SYSTEM dumping. 
+
+This tool extracts the files without writing to the target filesystem when using remote transfer mode. 
+
+XOR-encoding offers basic obfuscation to evade signature-based detection even when using remote mode.
+
+It leverages direct NT API calls to bypass some security monitoring solutions and user-mode API hooks.
+
+
+<br>
+
+## NT API Integration
+
+The tool employs direct NT system calls instead of standard Windows API functions which might bypass some user-mode API hooks commonly monitored:
+
+- NtCreateFile/NtReadFile: To open a handle and read the bytes of the SAM and SYSTEM files in the Shadow Copy.
+
+- NtWriteFile: To save the files locally.
+
+- Direct memory manipulation: Custom GetProcAddress implementation to resolve function addresses without standard library calls using NtReadVirtualMemory.
